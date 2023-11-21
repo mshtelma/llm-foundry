@@ -123,11 +123,12 @@ def build_finetuning_dataloader(cfg: DictConfig,
 
     # _validate_config(cfg.dataset)
     #
-    # # Use EOS as the pad token if none exists
-    # if tokenizer.pad_token is None:
-    #     tokenizer.pad_token = tokenizer.eos_token
-    #
-    # dataset = None  # for pyright
+    # Use EOS as the pad token if none exists
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+
+# dataset = None  # for pyright
     # if cfg.dataset.get('remote') is not None:
     #     dataset = dataset_constructor.build_from_streaming(
     #         tokenizer=tokenizer,
