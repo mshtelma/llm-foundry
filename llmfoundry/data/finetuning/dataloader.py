@@ -131,6 +131,8 @@ def build_finetuning_dataloader(cfg: DictConfig,
 
     dataset = dataset.map(
         lambda x: tokenizer(text=x['prompt'], text_target=x['response']),
+        batched=False,
+        remove_columns=list(dataset[0].keys()),
         desc='Tokenizing dataset',
     )
 
