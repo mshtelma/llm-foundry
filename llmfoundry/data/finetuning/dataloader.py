@@ -119,7 +119,7 @@ def build_finetuning_dataloader(cfg: DictConfig,
         given a starting workload YAML.
     """
 
-    dataset = HFPTDataLoader("mosaicml/dolly_hhrlhf").create_dataset()
+
 
     # _validate_config(cfg.dataset)
     #
@@ -127,6 +127,12 @@ def build_finetuning_dataloader(cfg: DictConfig,
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    dataset = HFPTDataLoader("mosaicml/dolly_hhrlhf").create_dataset()
+
+    dataset = dataset.map(
+        lambda x: tokenizer(text=x['prompt'], text_target=x['response']),
+        desc='Tokenizing dataset',
+    )
 
 # dataset = None  # for pyright
     # if cfg.dataset.get('remote') is not None:
