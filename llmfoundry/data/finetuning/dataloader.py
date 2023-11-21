@@ -127,7 +127,7 @@ def build_finetuning_dataloader(cfg: DictConfig,
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    dataset = HFPTDataLoader("mosaicml/dolly_hhrlhf").create_dataset()
+    dataset = HFPTDataLoader("mosaicml/dolly_hhrlhf").create_dataset(split=cfg.split.replace('-', '_'))
 
     dataset = dataset.map(
         lambda x: tokenizer(text=x['prompt'], text_target=x['response']),
