@@ -17,6 +17,8 @@ from llmfoundry.data.finetuning.tasks import dataset_constructor
 from llmfoundry.data.packing import BinPackCollator, auto_packing_ratio
 from llmfoundry.data.text_data import get_tokens_per_batch_func
 
+from ptdataloader import HFPTDataLoader
+
 log = logging.getLogger(__name__)
 
 # HuggingFace hardcodes the ignore index to -100
@@ -116,105 +118,112 @@ def build_finetuning_dataloader(cfg: DictConfig,
         padding/waste rates for different `cfg.dataset.packing_ratio` choices,
         given a starting workload YAML.
     """
-    _validate_config(cfg.dataset)
 
-    # Use EOS as the pad token if none exists
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    dataset = HFPTDataLoader("mosaicml/dolly_hhrlhf").create_dataset()
 
-    dataset = None  # for pyright
-    if cfg.dataset.get('remote') is not None:
-        dataset = dataset_constructor.build_from_streaming(
-            tokenizer=tokenizer,
-            local=cfg.dataset.local,
-            remote=cfg.dataset.get('remote', None),
-            split=cfg.dataset.get('split', None),
-            download_retry=cfg.dataset.get('download_retry', 2),
-            download_timeout=cfg.dataset.get('download_timeout', 60),
-            validate_hash=cfg.dataset.get('validate_hash', None),
-            keep_zip=cfg.dataset.get('keep_zip', False),
-            epoch_size=cfg.dataset.get('epoch_size', None),
-            predownload=cfg.dataset.get('predownload', None),
-            cache_limit=cfg.dataset.get('cache_limit', None),
-            partition_algo=cfg.dataset.get('partition_algo', 'relaxed'),
-            num_canonical_nodes=cfg.dataset.get('num_canonical_nodes', None),
-            batch_size=device_batch_size,
-            shuffle=cfg.dataset.get('shuffle', False),
-            shuffle_algo=cfg.dataset.get('shuffle_algo', 'py1e'),
-            shuffle_seed=cfg.dataset.get('shuffle_seed', 9176),
-            shuffle_block_size=cfg.dataset.get('shuffle_block_size', None),
-            sampling_method=cfg.dataset.get('sampling_method', 'balanced'),
-            sampling_granularity=cfg.dataset.get('sampling_granularity', 1),
-            batching_method=cfg.dataset.get('batching_method', 'random'),
-        )
+    # _validate_config(cfg.dataset)
+    #
+    # # Use EOS as the pad token if none exists
+    # if tokenizer.pad_token is None:
+    #     tokenizer.pad_token = tokenizer.eos_token
+    #
+    # dataset = None  # for pyright
+    # if cfg.dataset.get('remote') is not None:
+    #     dataset = dataset_constructor.build_from_streaming(
+    #         tokenizer=tokenizer,
+    #         local=cfg.dataset.local,
+    #         remote=cfg.dataset.get('remote', None),
+    #         split=cfg.dataset.get('split', None),
+    #         download_retry=cfg.dataset.get('download_retry', 2),
+    #         download_timeout=cfg.dataset.get('download_timeout', 60),
+    #         validate_hash=cfg.dataset.get('validate_hash', None),
+    #         keep_zip=cfg.dataset.get('keep_zip', False),
+    #         epoch_size=cfg.dataset.get('epoch_size', None),
+    #         predownload=cfg.dataset.get('predownload', None),
+    #         cache_limit=cfg.dataset.get('cache_limit', None),
+    #         partition_algo=cfg.dataset.get('partition_algo', 'relaxed'),
+    #         num_canonical_nodes=cfg.dataset.get('num_canonical_nodes', None),
+    #         batch_size=device_batch_size,
+    #         shuffle=cfg.dataset.get('shuffle', False),
+    #         shuffle_algo=cfg.dataset.get('shuffle_algo', 'py1e'),
+    #         shuffle_seed=cfg.dataset.get('shuffle_seed', 9176),
+    #         shuffle_block_size=cfg.dataset.get('shuffle_block_size', None),
+    #         sampling_method=cfg.dataset.get('sampling_method', 'balanced'),
+    #         sampling_granularity=cfg.dataset.get('sampling_granularity', 1),
+    #         batching_method=cfg.dataset.get('batching_method', 'random'),
+    #     )
+    #
+    #     collate_fn, dataloader_batch_size = _build_collate_fn(
+    #         cfg, tokenizer, device_batch_size)
+    #
+    #     dl = DataLoader(
+    #         dataset,
+    #         collate_fn=collate_fn,
+    #         batch_size=dataloader_batch_size,
+    #         drop_last=cfg.drop_last,
+    #         num_workers=cfg.num_workers,
+    #         pin_memory=cfg.get('pin_memory', True),
+    #         prefetch_factor=cfg.get('prefetch_factor', 2),
+    #         persistent_workers=cfg.get('persistent_workers', True),
+    #         timeout=cfg.get('timeout', 0),
+    #     )
+    #
+    # else:
+    #     backend, _, _ = parse_uri(cfg.dataset.hf_name)
+    #     if backend not in ['', None]:
+    #         if cfg.dataset.get('split') is None:
+    #             raise ValueError(
+    #                 'When using a HuggingFace dataset from a URL, you must set the ' + \
+    #                 '`split` key in the dataset config.'
+    #             )
+    #         dataset = _build_hf_dataset_from_remote(cfg, tokenizer)
+    #     else:
+    #         dataset = dataset_constructor.build_from_hf(
+    #             cfg.dataset,
+    #             max_seq_len=cfg.dataset.max_seq_len,
+    #             tokenizer=tokenizer,
+    #         )
+    #
+    #     collate_fn, dataloader_batch_size = _build_collate_fn(
+    #         cfg, tokenizer, device_batch_size)
+    #
+    #     if cfg.drop_last:
+    #         world_size = dist.get_world_size()
+    #         minimum_dataset_size = world_size * dataloader_batch_size
+    #         if hasattr(dataset, '__len__'):
+    #             full_dataset_size = len(dataset)
+    #             if full_dataset_size < minimum_dataset_size:
+    #                 raise ValueError(
+    #                     f'Your dataset (name={cfg.dataset.hf_name}, split={cfg.dataset.split}) '
+    #                     +
+    #                     f'has {full_dataset_size} samples, but your minimum batch size '
+    #                     +
+    #                     f'is {minimum_dataset_size} because you are running on {world_size} gpus and '
+    #                     +
+    #                     f'your per device batch size is {dataloader_batch_size}. Please increase the number '
+    #                     +
+    #                     f'of samples in your dataset to at least {minimum_dataset_size}.'
+    #                 )
 
-        collate_fn, dataloader_batch_size = _build_collate_fn(
-            cfg, tokenizer, device_batch_size)
+    assert dataset is not None
 
-        dl = DataLoader(
-            dataset,
-            collate_fn=collate_fn,
-            batch_size=dataloader_batch_size,
-            drop_last=cfg.drop_last,
-            num_workers=cfg.num_workers,
-            pin_memory=cfg.get('pin_memory', True),
-            prefetch_factor=cfg.get('prefetch_factor', 2),
-            persistent_workers=cfg.get('persistent_workers', True),
-            timeout=cfg.get('timeout', 0),
-        )
+    collate_fn, dataloader_batch_size = _build_collate_fn(
+                 cfg, tokenizer, device_batch_size)
 
-    else:
-        backend, _, _ = parse_uri(cfg.dataset.hf_name)
-        if backend not in ['', None]:
-            if cfg.dataset.get('split') is None:
-                raise ValueError(
-                    'When using a HuggingFace dataset from a URL, you must set the ' + \
-                    '`split` key in the dataset config.'
-                )
-            dataset = _build_hf_dataset_from_remote(cfg, tokenizer)
-        else:
-            dataset = dataset_constructor.build_from_hf(
-                cfg.dataset,
-                max_seq_len=cfg.dataset.max_seq_len,
-                tokenizer=tokenizer,
-            )
-
-        collate_fn, dataloader_batch_size = _build_collate_fn(
-            cfg, tokenizer, device_batch_size)
-
-        if cfg.drop_last:
-            world_size = dist.get_world_size()
-            minimum_dataset_size = world_size * dataloader_batch_size
-            if hasattr(dataset, '__len__'):
-                full_dataset_size = len(dataset)
-                if full_dataset_size < minimum_dataset_size:
-                    raise ValueError(
-                        f'Your dataset (name={cfg.dataset.hf_name}, split={cfg.dataset.split}) '
-                        +
-                        f'has {full_dataset_size} samples, but your minimum batch size '
-                        +
-                        f'is {minimum_dataset_size} because you are running on {world_size} gpus and '
-                        +
-                        f'your per device batch size is {dataloader_batch_size}. Please increase the number '
-                        +
-                        f'of samples in your dataset to at least {minimum_dataset_size}.'
-                    )
-
-        assert dataset is not None
-        dl = DataLoader(
-            dataset,
-            collate_fn=collate_fn,
-            batch_size=dataloader_batch_size,
-            drop_last=cfg.drop_last,
-            sampler=dist.get_sampler(dataset,
-                                     drop_last=cfg.drop_last,
-                                     shuffle=cfg.dataset.shuffle),
-            num_workers=cfg.num_workers,
-            pin_memory=cfg.get('pin_memory', True),
-            prefetch_factor=cfg.get('prefetch_factor', 2),
-            persistent_workers=cfg.get('persistent_workers', True),
-            timeout=cfg.get('timeout', 0),
-        )
+    dl = DataLoader(
+        dataset,
+        collate_fn=collate_fn,
+        batch_size=dataloader_batch_size,
+        drop_last=cfg.drop_last,
+        sampler=dist.get_sampler(dataset,
+                                 drop_last=cfg.drop_last,
+                                 shuffle=cfg.dataset.shuffle),
+        num_workers=cfg.num_workers,
+        pin_memory=cfg.get('pin_memory', True),
+        prefetch_factor=cfg.get('prefetch_factor', 2),
+        persistent_workers=cfg.get('persistent_workers', True),
+        timeout=cfg.get('timeout', 0),
+    )
 
     token_counting_func = get_tokens_per_batch_func(
         pad_token_id=tokenizer.pad_token_id)
