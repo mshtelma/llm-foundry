@@ -174,11 +174,10 @@ def _get_key(dictionary: Mapping[str, Any], allowed_keys: set[str]):
 
 
 def _validate_chat_formatted_example(example: ChatFormattedDict):
+    print(example)
     if not isinstance(example, Mapping):
         raise InvalidExampleTypeError(str(type(example)))
     messages = example[_get_key(example, ALLOWED_MESSAGES_KEYS)]
-    print(messages)
-    print(type(messages))
     if not isinstance(messages, list):
         raise InvalidMessageTypeError(str(type(messages)))
     if len(messages) <= 1:
