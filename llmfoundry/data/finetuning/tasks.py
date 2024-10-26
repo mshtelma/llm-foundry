@@ -675,6 +675,7 @@ class StreamingFinetuningDataset(StreamingDataset):
     # How to process a sample
     def __getitem__(self, idx: int) -> dict[str, Any]:
         sample = super().__getitem__(idx)
+        print(sample)
         if 'turns' in sample:
             # Already tokenized in latest format
             return sample
