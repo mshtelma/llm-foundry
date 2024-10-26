@@ -67,6 +67,7 @@ from llmfoundry.data.finetuning.collator import (
     stitch_turns_encoder_decoder,
 )
 from llmfoundry.tokenizers import get_date_string
+from llmfoundry.utils import process_init_device
 # yapf: disable
 from llmfoundry.utils.exceptions import (
     ALLOWED_MESSAGES_KEYS,
@@ -177,6 +178,8 @@ def _validate_chat_formatted_example(example: ChatFormattedDict):
     if not isinstance(example, Mapping):
         raise InvalidExampleTypeError(str(type(example)))
     messages = example[_get_key(example, ALLOWED_MESSAGES_KEYS)]
+    print(messages)
+    print(type(messages))
     if not isinstance(messages, list):
         raise InvalidMessageTypeError(str(type(messages)))
     if len(messages) <= 1:
