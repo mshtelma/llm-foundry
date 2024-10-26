@@ -3,17 +3,24 @@
 
 """Dataloader builder utilities."""
 
+from typing import Any, Union
+
 from composer import DataSpec
-from omegaconf import DictConfig
 from transformers import PreTrainedTokenizerBase
 
-from llmfoundry.data.denoising import build_text_denoising_dataloader
-from llmfoundry.data.finetuning.dataloader import build_finetuning_dataloader
-from llmfoundry.data.text_data import build_text_dataloader
+from llmfoundry import registry
+from llmfoundry.utils.registry_utils import construct_from_registry
+
+__all__ = [
+    'build_dataloader',
+]
 
 
-def build_dataloader(cfg: DictConfig, tokenizer: PreTrainedTokenizerBase,
-                     device_batch_size: int) -> DataSpec:
+def build_dataloader(
+    cfg: dict[str, Any],
+    tokenizer: PreTrainedTokenizerBase,
+    device_batch_size: Union[int, float],
+) -> DataSpec:
     """Builds a dataloader from a config.
 
     Args:
@@ -22,23 +29,18 @@ def build_dataloader(cfg: DictConfig, tokenizer: PreTrainedTokenizerBase,
         device_batch_size (int): The size of the batches (number of examples)
             that the dataloader will produce.
     """
-    if cfg.name == 'text':
-        return build_text_dataloader(
-            cfg,
-            tokenizer,
-            device_batch_size,
-        )
-    elif cfg.name == 'text_denoising':
-        return build_text_denoising_dataloader(
-            cfg,
-            tokenizer,
-            device_batch_size,
-        )
-    elif cfg.name == 'finetuning':
-        return build_finetuning_dataloader(
-            cfg,
-            tokenizer,
-            device_batch_size,
-        )
-    else:
-        raise ValueError(f'Not sure how to build dataloader with config: {cfg}')
+    name = cfg.pop('name')
+    kwargs: dict[str, Any] = {
+        **cfg,
+        'tokenizer': tokenizer,
+        'device_batch_size': device_batch_size,
+    }
+
+    return construct_from_registry(
+        name=name,
+        registry=registry.dataloaders,
+        partial_function=False,
+        pre_validation_function=None,
+        post_validation_function=None,
+        kwargs=kwargs,
+    )

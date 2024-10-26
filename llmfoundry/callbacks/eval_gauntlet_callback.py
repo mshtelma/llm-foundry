@@ -6,7 +6,7 @@
 import logging
 import math
 from enum import Enum
-from typing import Dict, Optional
+from typing import Optional
 
 from composer.core import Callback, State
 from composer.loggers import Logger
@@ -22,8 +22,10 @@ class Weighting(Enum):
     LOG_SAMPLE_SZ = 3
 
 
-def calculate_named_averages(average_names: Dict[str, list],
-                             category_scores: Dict[str, float]):
+def calculate_named_averages(
+    average_names: dict[str, list],
+    category_scores: dict[str, float],
+):
     """Calculates the named averages based off the raw category scores.
 
     For each named average, take a simple average of all the category scores associated with that named average.
@@ -40,8 +42,9 @@ def calculate_named_averages(average_names: Dict[str, list],
             if category in category_list
         }
         if len(composite_subset.values()) > 0:
-            average_scores[avg_name] = sum(composite_subset.values()) / len(
-                composite_subset.values())
+            average_scores[avg_name] = sum(
+                composite_subset.values(),
+            ) / len(composite_subset.values())
         else:
             average_scores[avg_name] = 0
 
@@ -59,7 +62,7 @@ class EvalGauntlet(Callback):
                             logged under in the logger after eval
         categories (dict): This contains the list of categories, as well as the subtasks within them, the
                       random baseline accuracy of each subtask, and the number of fewshot examples
-                      used for the task. See `llmfoundry/scripts/eval/yamls/eval_gauntlet.yaml` to see the structure.
+                      used for the task. See `llmfoundry/scripts/eval/yamls/eval_gauntlet_v0.2.yaml` to see the structure.
         weighting (Weighting): The weighting scheme used to balance different tasks within each category.
                                Either assign them all equal weight, assign them weight proportional
                                to the dataset size, or assign them weight proportional to the log2 of the dataset size.
@@ -72,25 +75,28 @@ class EvalGauntlet(Callback):
         averages (Optional[dict]): Optional dictionary specifying a mapping from a average names to lists of categories used produce each named average.
     """
 
-    def __init__(self,
-                 logger_keys: list,
-                 categories: dict,
-                 weighting: str = 'EQUAL',
-                 subtract_random_baseline: bool = True,
-                 rescale_accuracy: bool = True,
-                 benchmark_sizes: Optional[dict] = None,
-                 averages: Optional[dict] = None):
+    def __init__(
+        self,
+        logger_keys: list,
+        categories: dict,
+        weighting: str = 'EQUAL',
+        subtract_random_baseline: bool = True,
+        rescale_accuracy: bool = True,
+        benchmark_sizes: Optional[dict] = None,
+        averages: Optional[dict] = None,
+    ):
         if isinstance(logger_keys, dict):
             raise ValueError(
-                'logger_keys now requires a list type as input, not a dict')
+                'logger_keys now requires a list type as input, not a dict',
+            )
         if weighting != Weighting.EQUAL and benchmark_sizes is None:
             raise Exception(
-                'When not using equal weighting, you must provide the benchmark sizes.'
+                'When not using equal weighting, you must provide the benchmark sizes.',
             )
 
         if rescale_accuracy and not subtract_random_baseline:
             raise Exception(
-                'Only use accuracy rescaling in conjunction with subtracting random baseline accuracy.'
+                'Only use accuracy rescaling in conjunction with subtracting random baseline accuracy.',
             )
 
         self.categories = categories
@@ -106,8 +112,12 @@ class EvalGauntlet(Callback):
                 if self.weighting != Weighting.EQUAL:
                     assert benchmark_sizes is not None
                     cumulative_samples = max(
-                        sum(count for name, count in benchmark_sizes.items()
-                            if name.startswith(bench_name)), 1)
+                        sum(
+                            count for name, count in benchmark_sizes.items()
+                            if name.startswith(bench_name)
+                        ),
+                        1,
+                    )
                 else:
                     cumulative_samples = -1  # pyright
 
@@ -117,8 +127,7 @@ class EvalGauntlet(Callback):
                 elif self.weighting == Weighting.SAMPLE_SZ:
                     weight = cumulative_samples
                 elif self.weighting == Weighting.LOG_SAMPLE_SZ:
-                    weight = max(math.log(cumulative_samples, 2), 1)
-
+                    weight = max(math.log2(cumulative_samples), 1)
                 assert weight is not None
                 benchmark['weighting'] = weight
 
@@ -132,10 +141,10 @@ class EvalGauntlet(Callback):
         for avg_name in self.averages:
             if avg_name in self.category_names:
                 raise ValueError(
-                    f'Found average name `{avg_name}` used as category name. Average names and category names must be non-overlapping.'
+                    f'Found average name `{avg_name}` used as category name. Average names and category names must be non-overlapping.',
                 )
 
-    def extract_metrics_from_state(self, state: State) -> Dict[str, float]:
+    def extract_metrics_from_state(self, state: State) -> dict[str, float]:
         results = {}
 
         for key in self.logger_keys:
@@ -160,7 +169,7 @@ class EvalGauntlet(Callback):
 
         return {k: sum(v) / len(v) for k, v in results.items()}
 
-    def eval_after_all(self, state: State, logger: Logger) -> Dict[str, float]:
+    def eval_after_all(self, state: State, logger: Logger) -> dict[str, float]:
         computed_metrics = self.extract_metrics_from_state(state)
         if len(computed_metrics) == 0:
             return {}
@@ -173,7 +182,8 @@ class EvalGauntlet(Callback):
 
                 if key not in computed_metrics:
                     log.warning(
-                        f'Could not find results for benchmark: {benchmark}.')
+                        f'Could not find results for benchmark: {benchmark}.',
+                    )
                     missing_metrics.append(key)
                 else:
                     score = computed_metrics[key]
@@ -187,23 +197,27 @@ class EvalGauntlet(Callback):
                     category_scores[category['name']].append({
                         'name': benchmark['name'],
                         'score': score,
-                        'weighting': benchmark['weighting']
+                        'weighting': benchmark['weighting'],
                     })
 
             if len(missing_metrics) > 0:
                 log.warning(
-                    f"Removing category `{category['name']}` from scores because benchmarks were missing: {missing_metrics}"
+                    f"Removing category `{category['name']}` from scores because benchmarks were missing: {missing_metrics}",
                 )
                 del category_scores[category['name']]
                 continue
             total_weight = sum(
-                k['weighting'] for k in category_scores[category['name']])
+                k['weighting'] for k in category_scores[category['name']]
+            )
             category_scores[category['name']] = sum(
                 k['score'] * (k['weighting'] / total_weight)
-                for k in category_scores[category['name']])
+                for k in category_scores[category['name']]
+            )
 
-        named_averages = calculate_named_averages(self.averages,
-                                                  category_scores)
+        named_averages = calculate_named_averages(
+            self.averages,
+            category_scores,
+        )
         category_scores.update(named_averages)
         category_scores = {
             f'icl/metrics/eval_gauntlet/{k}': v
