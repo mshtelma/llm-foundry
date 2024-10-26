@@ -67,7 +67,6 @@ from llmfoundry.data.finetuning.collator import (
     stitch_turns_encoder_decoder,
 )
 from llmfoundry.tokenizers import get_date_string
-from llmfoundry.utils import process_init_device
 # yapf: disable
 from llmfoundry.utils.exceptions import (
     ALLOWED_MESSAGES_KEYS,
