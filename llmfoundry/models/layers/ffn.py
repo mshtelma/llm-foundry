@@ -27,10 +27,13 @@ try:
 except ModuleNotFoundError:
     is_te_imported = False
 
-try:
-    import megablocks
-    is_megablocks_imported = True
-except ModuleNotFoundError:
+if torch.cuda.is_available():
+    try:
+        import megablocks
+        is_megablocks_imported = True
+    except ModuleNotFoundError:
+        is_megablocks_imported = False
+else:
     is_megablocks_imported = False
 
 log = logging.getLogger(__name__)
