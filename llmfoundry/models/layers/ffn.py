@@ -27,6 +27,8 @@ try:
 except ModuleNotFoundError:
     is_te_imported = False
 
+# We need to gate megablocks as it depends on triton, which will error
+# upon import if CUDA is not available.
 if torch.cuda.is_available():
     try:
         import megablocks
