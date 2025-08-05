@@ -461,13 +461,12 @@ class GroupedQueryAttention(nn.Module):
         reuse_kv_layer_idx: Optional[int] = None,
         attn_logit_softcapping: Optional[float] = None,
         kv_dim: Optional[int] = None,
+        qk_norm: Optional[str] = None,
     ):
         super().__init__()
 
         self.attn_impl = attn_impl
         self.clip_qkv = clip_qkv
-        self.qk_ln = qk_ln
-        self.qk_gn = qk_gn
         self.fused_qkv = fused_qkv
 
         self.d_model = d_model
@@ -479,6 +478,31 @@ class GroupedQueryAttention(nn.Module):
 
         self.kv_dim = kv_dim if kv_dim is not None else self.d_model
         self.head_dim = d_model // n_heads
+        
+        # Initialize normalization attributes
+        self.q_norm = None
+        self.k_norm = None
+        
+        # Handle deprecated qk_ln and qk_gn
+        if qk_ln or qk_gn:
+            warnings.warn(
+                'qk_ln and qk_gn are deprecated and will be removed in a future version. '
+                'Use qk_norm instead: "layernorm" for qk_ln, "groupnorm" for qk_gn.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if qk_norm is not None:
+                raise ValueError("Cannot specify both qk_norm and qk_ln/qk_gn")
+            if qk_ln:
+                qk_norm = "layernorm"
+            elif qk_gn:
+                qk_norm = "groupnorm"
+        
+        self.qk_ln = qk_ln  # Kept for backward compatibility
+        self.qk_gn = qk_gn  # Kept for backward compatibility
+        self.qk_norm = qk_norm
+        self.norm_type = norm_type
+        self.norm_eps = norm_eps
 
         # Usually, fc_type dict should be passed in through MPTBlock's __init__ function.
         if fc_type is None:
@@ -499,8 +523,6 @@ class GroupedQueryAttention(nn.Module):
             raise ValueError(
                 'Each Q head should get the same number of KV heads, so n_heads must be divisible by kv_n_heads.',
             )
-        if qk_ln and qk_gn:
-            raise ValueError('Only one of qk_ln and qk_gn can be set to True.')
 
         self.softmax_scale = softmax_scale
         if self.softmax_scale is None:
@@ -558,23 +580,8 @@ class GroupedQueryAttention(nn.Module):
             self.Wk._fused = (0, kv_fuse_splits)
             self.Wv._fused = (0, kv_fuse_splits)
 
-        if self.qk_ln or self.qk_gn:
-            norm_size = self.head_dim if qk_gn else d_model
-            self.q_ln = build_norm(
-                name=norm_type.lower(),
-                normalized_shape=norm_size,
-                eps=norm_eps,
-                device=device,
-            )
-            if self.reuse_kv_layer_idx is None:
-                if qk_ln:
-                    norm_size = self.head_dim * kv_n_heads
-                self.k_ln = build_norm(
-                    name=norm_type.lower(),
-                    normalized_shape=norm_size,
-                    eps=norm_eps,
-                    device=device,
-                )
+        # Set up query/key normalization if needed
+        self._setup_qk_normalization(device)
 
         self.attn_fn = attention_implementations.get(self.attn_impl)
 
@@ -585,6 +592,133 @@ class GroupedQueryAttention(nn.Module):
             fc_kwargs=fc_type,
         )
         self.out_proj._is_residual = True
+
+    def _setup_qk_normalization(self, device: Optional[str] = None):
+        """Set up normalization for query and key tensors."""
+        # For backward compatibility with qk_ln and qk_gn
+        if self.qk_ln or self.qk_gn or self.qk_norm:
+            if self.qk_norm in [None, "layernorm"] or self.qk_ln:
+                # LayerNorm mode
+                norm_size = self.d_model
+                self.q_norm = build_norm(
+                    name=self.norm_type.lower(),
+                    normalized_shape=norm_size,
+                    eps=self.norm_eps,
+                    device=device,
+                )
+                if self.reuse_kv_layer_idx is None:
+                    self.k_norm = build_norm(
+                        name=self.norm_type.lower(),
+                        normalized_shape=norm_size,
+                        eps=self.norm_eps,
+                        device=device,
+                    )
+            elif self.qk_norm == "groupnorm" or self.qk_gn:
+                # GroupNorm mode (per-head)
+                norm_size = self.head_dim
+                self.q_norm = build_norm(
+                    name=self.norm_type.lower(),
+                    normalized_shape=norm_size,
+                    eps=self.norm_eps,
+                    device=device,
+                )
+                if self.reuse_kv_layer_idx is None:
+                    self.k_norm = build_norm(
+                        name=self.norm_type.lower(),
+                        normalized_shape=norm_size,
+                        eps=self.norm_eps,
+                        device=device,
+                    )
+            elif self.qk_norm == "rmsnorm":
+                # RMSNorm (applied after rotary embeddings)
+                self.q_norm = build_norm(
+                    name="rmsnorm",
+                    normalized_shape=self.head_dim,
+                    eps=self.norm_eps,
+                    device=device,
+                )
+                if self.reuse_kv_layer_idx is None:
+                    self.k_norm = build_norm(
+                        name="rmsnorm",
+                        normalized_shape=self.head_dim,
+                        eps=self.norm_eps,
+                        device=device,
+                    )
+            elif self.qk_norm == "rmsnorm_no_weight":
+                # Weightless RMSNorm (Llama4-style)
+                self.q_norm = build_norm(
+                    name="rmsnorm",
+                    normalized_shape=self.head_dim,
+                    eps=self.norm_eps,
+                    device=device,
+                    elementwise_affine=False,
+                )
+                if self.reuse_kv_layer_idx is None:
+                    self.k_norm = build_norm(
+                        name="rmsnorm",
+                        normalized_shape=self.head_dim,
+                        eps=self.norm_eps,
+                        device=device,
+                        elementwise_affine=False,
+                    )
+            else:
+                raise ValueError(f"Unsupported qk_norm type: {self.qk_norm}")
+            
+    def _apply_qk_norm(
+        self, 
+        query: torch.Tensor, 
+        key: torch.Tensor, 
+        is_after_rotary: bool = False
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Apply normalization to query and key tensors.
+        
+        Args:
+            query: The query tensor
+            key: The key tensor
+            is_after_rotary: Whether this is being applied after rotary embeddings
+            
+        Returns:
+            Normalized query and key tensors
+        """
+        # Skip if no normalization is configured
+        if not hasattr(self, 'q_norm'):
+            return query, key
+            
+        # Handle RMSNorm modes that should only be applied after rotary embeddings
+        if self.qk_norm in ["rmsnorm", "rmsnorm_no_weight"] and not is_after_rotary:
+            return query, key
+            
+        batch_size, seq_len = query.shape[:2]
+        q_shape, k_shape = query.shape, key.shape
+        
+        if self.qk_norm in ["rmsnorm", "rmsnorm_no_weight"]:
+            # For RMSNorm modes, normalize by head dimension
+            query = query.view(batch_size, seq_len, self.n_heads, self.head_dim)
+            key = key.view(batch_size, seq_len, self.kv_n_heads, self.head_dim)
+            
+            query = self.q_norm(query.float()).to(query.dtype)
+            if hasattr(self, 'k_norm'):
+                key = self.k_norm(key.float()).to(key.dtype)
+                
+            query = query.view(q_shape)
+            key = key.view(k_shape)
+        elif self.qk_norm == "groupnorm" or self.qk_gn:
+            # For GroupNorm mode, reshape to expose head dimension
+            query = query.view(batch_size, seq_len, self.n_heads, self.head_dim)
+            dtype = query.dtype
+            query = self.q_norm(query).to(dtype).view(q_shape)
+            
+            if hasattr(self, 'k_norm'):
+                key = key.view(batch_size, seq_len, self.kv_n_heads, self.head_dim)
+                key = self.k_norm(key).to(dtype).view(k_shape)
+        else:
+            # For LayerNorm mode or default
+            dtype = query.dtype
+            query = self.q_norm(query).to(dtype)
+            if hasattr(self, 'k_norm'):
+                key = self.k_norm(key).to(dtype)
+                
+        return query, key
 
     def forward(
         self,
@@ -611,6 +745,9 @@ class GroupedQueryAttention(nn.Module):
             **extra_kwargs,
         )
 
+        # Apply normalization before rotary if needed
+        query, key = self._apply_qk_norm(query, key, is_after_rotary=False)
+
         if rotary_emb_w_meta_info is not None:
             query, key, value = self._apply_rotary_embeddings(
                 rotary_emb_w_meta_info,
@@ -618,6 +755,9 @@ class GroupedQueryAttention(nn.Module):
                 key,
                 value,
             )
+        
+        # Apply normalization after rotary if needed
+        query, key = self._apply_qk_norm(query, key, is_after_rotary=True)
 
         extra_attn_kwargs = self.get_implementation_specific_args(
             attention_mask,
@@ -678,14 +818,6 @@ class GroupedQueryAttention(nn.Module):
             if self.clip_qkv:
                 query = query.clamp(min=-self.clip_qkv, max=self.clip_qkv)
 
-            if self.qk_ln or self.qk_gn:
-                # Applying layernorm to qk
-                q_shape = query.shape
-                if self.qk_gn:
-                    b, s = query.shape[:2]
-                    query = query.view(b, s, self.n_heads, -1)
-                dtype = query.dtype
-                query = self.q_ln(query).to(dtype).view(q_shape)
             return query, key, value
 
         if self.fused_qkv:
@@ -719,17 +851,6 @@ class GroupedQueryAttention(nn.Module):
                 query = query.clamp(min=-self.clip_qkv, max=self.clip_qkv)
                 key = key.clamp(min=-self.clip_qkv, max=self.clip_qkv)
                 value = value.clamp(min=-self.clip_qkv, max=self.clip_qkv)
-
-        if self.qk_ln or self.qk_gn:
-            # Applying layernorm to qk
-            q_shape, k_shape = query.shape, key.shape
-            if self.qk_gn:
-                b, s = query.shape[:2]
-                query = query.view(b, s, self.n_heads, -1)
-                key = key.view(b, s, self.kv_n_heads, -1)
-            dtype = query.dtype
-            query = self.q_ln(query).to(dtype).view(q_shape)
-            key = self.k_ln(key).to(dtype).view(k_shape)
 
         return query, key, value
 
