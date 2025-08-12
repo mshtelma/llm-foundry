@@ -579,6 +579,8 @@ class BaseHuggingFaceModel(HuggingFaceModel):
 
             # Use the model's default initialization method
             model._init_weights(module)  # type: ignore
+            print("INITIALIZED", module.__class__.__name__)
+            return
 
             # Initialize modules that are skipped in model._init_weights
             if hasattr(module, 'weight') and module.weight is not None:
