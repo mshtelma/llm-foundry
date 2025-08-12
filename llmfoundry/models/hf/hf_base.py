@@ -565,6 +565,7 @@ class BaseHuggingFaceModel(HuggingFaceModel):
             Args:
                 module: The module to initialize.
             """
+            return
             if te is not None:
                 # Initialize transformer engine modules
                 if isinstance(
@@ -580,7 +581,6 @@ class BaseHuggingFaceModel(HuggingFaceModel):
             # Use the model's default initialization method
             model._init_weights(module)  # type: ignore
             print("INITIALIZED", module.__class__.__name__)
-            return
 
             # Initialize modules that are skipped in model._init_weights
             if hasattr(module, 'weight') and module.weight is not None:
