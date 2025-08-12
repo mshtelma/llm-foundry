@@ -248,12 +248,29 @@ def _slice_chat_formatted_example(
             set('assistant'),
         )
 
+    def maybe_apply_gptoss_fix(conversation: str) -> str:
+        """Apply fix for OpenAI GPT-OSS models (gpt-oss-20b, gpt-oss-120b,
+        gpt-0b).
+
+        These models use <|return|> in training but <|end|> in conversation
+        reconstruction.
+        """
+        if conversation.endswith('<|return|>'):
+            return conversation.replace('<|return|>', '<|end|>')
+        return conversation
+
+    def is_valid_prefix(prefix: str, full_text: str) -> bool:
+        """Check if prefix matches the beginning of full_text."""
+        return prefix == full_text[:len(prefix)]
+
     def slice_out_last_turn(
         messages_through_current_turn: list[dict[str, str]],
         conversation_through_previous_turn: str,
     ) -> tuple[str, str]:
         chat_template = None if tokenizer.chat_template is not None else _DEFAULT_CHAT_TEMPLATE
 
+        full_conversation = None
+        prompt_with_history = None
         try:
             full_conversation = tokenizer.apply_chat_template(
                 messages_through_current_turn,
@@ -274,20 +291,43 @@ def _slice_chat_formatted_example(
                 sample=messages_through_current_turn,
                 inner_message=str(e),
             )
-        if conversation_through_previous_turn != full_conversation[:len(  # type: ignore
+
+        assert isinstance(full_conversation, str)  # for pyright
+        assert isinstance(prompt_with_history, str)  # for pyright
+
+        if not is_valid_prefix(
             conversation_through_previous_turn,
-        )]:
-            raise InvalidConversationError(
-                f'The full conversation must start with the conversation through the previous turn. {conversation_through_previous_turn=}, {full_conversation=}',
+            full_conversation,
+        ):
+            # Apply GPT-OSS fix if needed
+            conversation_through_previous_turn = maybe_apply_gptoss_fix(
+                conversation_through_previous_turn,
             )
-        if conversation_through_previous_turn != prompt_with_history[:len(  # type: ignore
+
+            if not is_valid_prefix(
+                conversation_through_previous_turn,
+                full_conversation,
+            ):
+                raise InvalidConversationError(
+                    f'The full conversation must start with the conversation through the previous turn. {conversation_through_previous_turn=}, {full_conversation=}',
+                )
+        if not is_valid_prefix(
             conversation_through_previous_turn,
-        )]:
-            raise InvalidConversationError(
-                f'The prompt_with_history must start with the conversation through the previous turn. {conversation_through_previous_turn=}, {prompt_with_history=}',
+            prompt_with_history,
+        ):
+            # Apply GPT-OSS fix if needed
+            conversation_through_previous_turn = maybe_apply_gptoss_fix(
+                conversation_through_previous_turn,
             )
-        if prompt_with_history != full_conversation[:len(prompt_with_history)
-                                                   ]:  # type: ignore
+
+            if not is_valid_prefix(
+                conversation_through_previous_turn,
+                prompt_with_history,
+            ):
+                raise InvalidConversationError(
+                    f'The prompt_with_history must start with the conversation through the previous turn. {conversation_through_previous_turn=}, {prompt_with_history=}',
+                )
+        if not is_valid_prefix(prompt_with_history, full_conversation):
             raise InvalidConversationError(
                 f'prompt_with_history must be the first part of the full conversation. {prompt_with_history=}, {full_conversation=}',
             )
