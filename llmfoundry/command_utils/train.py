@@ -1,6 +1,7 @@
 # Copyright 2022 MosaicML LLM Foundry authors
 # SPDX-License-Identifier: Apache-2.0
 import copy
+import datetime
 import gc
 import logging
 import os
@@ -515,12 +516,25 @@ def train(cfg: DictConfig) -> Trainer:
     name = model_config.pop('name')
     assert isinstance(name, str)
     assert isinstance(model_config, dict)
+    _model_build_start = time.monotonic()
+    _ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    log.info(
+        f'[MODEL_INIT] ts={_ts} global_rank={dist.get_global_rank()} local_rank={dist.get_local_rank()} '
+        f'world_size={dist.get_world_size()} pid={os.getpid()} phase="model_build_begin" '
+        f'model_name="{name}"',
+    )
     model = build_composer_model(
         name=name,
         tokenizer=tokenizer,
         init_context=init_context,
         master_weights_dtype=model_config.pop('master_weights_dtype', None),
         cfg=model_config,
+    )
+    _ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    log.info(
+        f'[MODEL_INIT] ts={_ts} global_rank={dist.get_global_rank()} local_rank={dist.get_local_rank()} '
+        f'world_size={dist.get_world_size()} pid={os.getpid()} phase="model_build_done" '
+        f'duration={time.monotonic() - _model_build_start:.3f}s',
     )
 
     _log_num_params(model, logged_cfg)
@@ -558,6 +572,14 @@ def train(cfg: DictConfig) -> Trainer:
     compile_config = train_cfg.compile_config
     # Build the Trainer
     log.info('Building trainer...')
+    _trainer_init_start = time.monotonic()
+    _ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    log.info(
+        f'[CHECKPOINT_LOAD] ts={_ts} global_rank={dist.get_global_rank()} local_rank={dist.get_local_rank()} '
+        f'world_size={dist.get_world_size()} pid={os.getpid()} phase="trainer_init_begin" '
+        f'load_path="{train_cfg.load_path}" load_weights_only={train_cfg.load_weights_only} '
+        f'autoresume={train_cfg.autoresume}',
+    )
     trainer = Trainer(
         run_name=run_name,
         seed=seed,
@@ -599,6 +621,12 @@ def train(cfg: DictConfig) -> Trainer:
         spin_dataloaders=train_cfg.spin_dataloaders,
         accumulate_train_batch_on_tokens=train_cfg.
         accumulate_train_batch_on_tokens,
+    )
+    _ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    log.info(
+        f'[CHECKPOINT_LOAD] ts={_ts} global_rank={dist.get_global_rank()} local_rank={dist.get_local_rank()} '
+        f'world_size={dist.get_world_size()} pid={os.getpid()} phase="trainer_init_done" '
+        f'duration={time.monotonic() - _trainer_init_start:.3f}s',
     )
 
     _sort_callbacks(trainer)
@@ -644,7 +672,19 @@ def train(cfg: DictConfig) -> Trainer:
         trainer.eval()
 
     log.info('Starting training...')
+    _fit_start = time.monotonic()
+    _ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    log.info(
+        f'[CHECKPOINT_LOAD] ts={_ts} global_rank={dist.get_global_rank()} local_rank={dist.get_local_rank()} '
+        f'world_size={dist.get_world_size()} pid={os.getpid()} phase="trainer_fit_begin"',
+    )
     trainer.fit()
+    _ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    log.info(
+        f'[CHECKPOINT_LOAD] ts={_ts} global_rank={dist.get_global_rank()} local_rank={dist.get_local_rank()} '
+        f'world_size={dist.get_world_size()} pid={os.getpid()} phase="trainer_fit_done" '
+        f'duration={time.monotonic() - _fit_start:.3f}s',
+    )
 
     log.info('Done.')
     return trainer

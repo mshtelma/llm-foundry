@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import queue
@@ -49,6 +50,22 @@ except:
 __all__ = ['BaseHuggingFaceModel']
 
 log = logging.getLogger(__name__)
+
+
+def _hf_load_log(phase: str, elapsed: float, extra: str = '') -> None:
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    grank = dist.get_global_rank()
+    lrank = dist.get_local_rank()
+    wsz = dist.get_world_size()
+    pid = os.getpid()
+    msg = (
+        f'[HF_MODEL_LOAD] ts={ts} '
+        f'global_rank={grank} local_rank={lrank} world_size={wsz} pid={pid} '
+        f'elapsed={elapsed:.3f}s phase="{phase}"'
+    )
+    if extra:
+        msg += f' {extra}'
+    log.info(msg)
 
 
 class BaseHuggingFaceModel(HuggingFaceModel):
@@ -313,6 +330,16 @@ class BaseHuggingFaceModel(HuggingFaceModel):
 
         auto_model_cls = cls.model_cls if model_cls is None else model_cls
 
+        _t0 = time.monotonic()
+        _phase_start = _t0
+        _hf_load_log(
+            'start',
+            0.0,
+            f'model="{pretrained_model_name_or_path}" init_device="{init_device}" '
+            f'resolved_device="{resolved_init_device}" pretrained={pretrained} '
+            f'auto_model_cls="{auto_model_cls.__name__}"',
+        )
+
         if not (
             hasattr(auto_model_cls, 'from_pretrained') and
             hasattr(auto_model_cls, 'from_config')
@@ -342,7 +369,10 @@ class BaseHuggingFaceModel(HuggingFaceModel):
             except OSError:
                 pass
 
+        _phase_start = time.monotonic()
+        _hf_load_log('barrier_1_enter', time.monotonic() - _t0)
         dist.barrier()
+        _hf_load_log('barrier_1_exit', time.monotonic() - _t0, f'barrier_wait={time.monotonic() - _phase_start:.3f}s')
 
         # Construct the Hugging Face config to use
         config = cls.build_config(
@@ -382,7 +412,10 @@ class BaseHuggingFaceModel(HuggingFaceModel):
                         attn_implementation=attn_implementation,
                     )
 
+        _phase_start = time.monotonic()
+        _hf_load_log('barrier_2_enter', time.monotonic() - _t0)
         dist.barrier()
+        _hf_load_log('barrier_2_exit', time.monotonic() - _t0, f'barrier_wait={time.monotonic() - _phase_start:.3f}s')
 
         def download_thread_target(queue: Optional[queue.Queue]):
             """Thread target to wait for the model to be downloaded."""
@@ -425,11 +458,13 @@ class BaseHuggingFaceModel(HuggingFaceModel):
                 daemon=True,
                 args=(download_status_queue,),
             )
-            log.debug('Starting download thread')
+            _hf_load_log('download_thread_start', time.monotonic() - _t0)
             wait_for_download_thread.start()
 
         model = None
         error = None
+        _phase_start = time.monotonic()
+        _hf_load_log('main_load_begin', time.monotonic() - _t0, f'device="{resolved_init_device}" pretrained={pretrained}')
         try:
             # initialize the model on the correct device
             if resolved_init_device == 'cpu':
@@ -442,12 +477,14 @@ class BaseHuggingFaceModel(HuggingFaceModel):
                         attn_implementation=attn_implementation,
                         config=config,
                     )
+                    _hf_load_log('from_pretrained_done', time.monotonic() - _t0, f'load_duration={time.monotonic() - _phase_start:.3f}s device="cpu"')
                 else:
                     model = auto_model_cls.from_config(  # type: ignore
                         config,
                         trust_remote_code=trust_remote_code,
                         attn_implementation=attn_implementation,
                     )
+                    _hf_load_log('from_config_done', time.monotonic() - _t0, f'load_duration={time.monotonic() - _phase_start:.3f}s device="cpu"')
             elif resolved_init_device == 'meta':
                 if pretrained:
                     raise ValueError(
@@ -459,6 +496,7 @@ class BaseHuggingFaceModel(HuggingFaceModel):
                         trust_remote_code=trust_remote_code,
                         attn_implementation=attn_implementation,
                     )
+                _hf_load_log('from_config_done', time.monotonic() - _t0, f'load_duration={time.monotonic() - _phase_start:.3f}s device="meta"')
             else:
                 raise ValueError(
                     f'Got {init_device=} which resolved to unknown device {resolved_init_device=} on global rank {dist.get_global_rank()}.',
@@ -466,17 +504,18 @@ class BaseHuggingFaceModel(HuggingFaceModel):
         except Exception as e:
             error = e
             log.error(e)
+            _hf_load_log('main_load_error', time.monotonic() - _t0, f'error_type="{type(e).__name__}" load_duration={time.monotonic() - _phase_start:.3f}s')
 
         # Signal that the download is complete on rank 0
         if download_status_queue is not None:
             download_status_queue.put(1)
-            log.debug('Download complete')
+            _hf_load_log('download_signal_sent', time.monotonic() - _t0)
 
         # Join and wait for the thread to complete on all ranks
         if wait_for_download_thread is not None:
-            log.debug('Joining download thread')
+            _hf_load_log('download_thread_join_begin', time.monotonic() - _t0)
             wait_for_download_thread.join(timeout=3600)
-            log.debug('Download thread joined')
+            _hf_load_log('download_thread_join_done', time.monotonic() - _t0)
 
         # Gather information about which ranks errored
         gathered_errors = dist.all_gather_object(error)
@@ -520,6 +559,7 @@ class BaseHuggingFaceModel(HuggingFaceModel):
         if prepare_for_fsdp:
             cls.prepare_inner_model(model, init_device)
 
+        _hf_load_log('complete', time.monotonic() - _t0)
         return model
 
     def get_peft_config(self, peft_config_dict: dict[str, Any]) -> 'PeftConfig':
