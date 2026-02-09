@@ -65,7 +65,7 @@ def _hf_load_log(phase: str, elapsed: float, extra: str = '') -> None:
     )
     if extra:
         msg += f' {extra}'
-    log.info(msg)
+    log.error(msg)
 
 
 class BaseHuggingFaceModel(HuggingFaceModel):

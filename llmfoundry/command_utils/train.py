@@ -518,7 +518,7 @@ def train(cfg: DictConfig) -> Trainer:
     assert isinstance(model_config, dict)
     _model_build_start = time.monotonic()
     _ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    log.info(
+    log.error(
         f'[MODEL_INIT] ts={_ts} global_rank={dist.get_global_rank()} local_rank={dist.get_local_rank()} '
         f'world_size={dist.get_world_size()} pid={os.getpid()} phase="model_build_begin" '
         f'model_name="{name}"',
@@ -531,7 +531,7 @@ def train(cfg: DictConfig) -> Trainer:
         cfg=model_config,
     )
     _ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    log.info(
+    log.error(
         f'[MODEL_INIT] ts={_ts} global_rank={dist.get_global_rank()} local_rank={dist.get_local_rank()} '
         f'world_size={dist.get_world_size()} pid={os.getpid()} phase="model_build_done" '
         f'duration={time.monotonic() - _model_build_start:.3f}s',
@@ -574,7 +574,7 @@ def train(cfg: DictConfig) -> Trainer:
     log.info('Building trainer...')
     _trainer_init_start = time.monotonic()
     _ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    log.info(
+    log.error(
         f'[CHECKPOINT_LOAD] ts={_ts} global_rank={dist.get_global_rank()} local_rank={dist.get_local_rank()} '
         f'world_size={dist.get_world_size()} pid={os.getpid()} phase="trainer_init_begin" '
         f'load_path="{train_cfg.load_path}" load_weights_only={train_cfg.load_weights_only} '
@@ -623,7 +623,7 @@ def train(cfg: DictConfig) -> Trainer:
         accumulate_train_batch_on_tokens,
     )
     _ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    log.info(
+    log.error(
         f'[CHECKPOINT_LOAD] ts={_ts} global_rank={dist.get_global_rank()} local_rank={dist.get_local_rank()} '
         f'world_size={dist.get_world_size()} pid={os.getpid()} phase="trainer_init_done" '
         f'duration={time.monotonic() - _trainer_init_start:.3f}s',
@@ -674,13 +674,13 @@ def train(cfg: DictConfig) -> Trainer:
     log.info('Starting training...')
     _fit_start = time.monotonic()
     _ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    log.info(
+    log.error(
         f'[CHECKPOINT_LOAD] ts={_ts} global_rank={dist.get_global_rank()} local_rank={dist.get_local_rank()} '
         f'world_size={dist.get_world_size()} pid={os.getpid()} phase="trainer_fit_begin"',
     )
     trainer.fit()
     _ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    log.info(
+    log.error(
         f'[CHECKPOINT_LOAD] ts={_ts} global_rank={dist.get_global_rank()} local_rank={dist.get_local_rank()} '
         f'world_size={dist.get_world_size()} pid={os.getpid()} phase="trainer_fit_done" '
         f'duration={time.monotonic() - _fit_start:.3f}s',
